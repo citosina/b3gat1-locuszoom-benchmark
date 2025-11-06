@@ -1,6 +1,6 @@
 # B3GAT1 LocusZoom Benchmark
 
-This repo contains the reproducible benchmark setup for reproducing **Figure 2.5B** from the GCST006085 prostate cancer GWAS study.
+This repo contains the reproducible benchmark setup for reproducing **Figure 5B** from the paper https://www.nature.com/articles/s42003-025-08738-w with the data source being the GCST006085 prostate cancer GWAS study.
 
 ## Contents
 - `expert_solution.R`: R-based expert solution using `locuszoomr`
