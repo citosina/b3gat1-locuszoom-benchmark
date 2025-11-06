@@ -4,113 +4,144 @@ suppressPackageStartupMessages({
   library(data.table)
   library(R.utils)
   library(locuszoomr)
-  library(ensembldb)
-  library(EnsDb.Hsapiens.v75)
+  library(EnsDb.Hsapiens.v75)   # brings in ensembldb, etc.
   library(rtracklayer)
 })
 
-# ---------- Paths ----------
-input_dir  <- "input_data"
-gwas_file  <- file.path(input_dir, "29892016-GCST006085-EFO_0001663-build37.f.tsv.gz")
-ld_file    <- file.path(input_dir, "B3GAT1_LD_r2_clean.tsv")
-recomb_bw  <- file.path(input_dir, "recomb_hg19_hapMapRelease24CombinedRecombMap.bw")
+# ----------------- Paths -----------------
+input_dir <- "input_data"
 
-# ---------- Region parameters ----------
-region_chr <- 11L
-center_bp  <- 134281332L
-flank_bp   <- 150000L
-start_bp   <- center_bp - flank_bp
-end_bp     <- center_bp + flank_bp
-index_snp_preferred <- "rs78760579"
+gwas_file <- file.path(
+  input_dir,
+  "29892016-GCST006085-EFO_0001663-build37.f.tsv.gz"
+)
 
-# ---------- Sanity: files exist ----------
-for (f in c(gwas_file, ld_file, recomb_bw)) {
-  if (!file.exists(f)) {
-    stop("Required file not found: ", f)
-  }
+ld_candidates <- c(
+  file.path(input_dir, "B3GAT1_LD_r2_clean.tsv"),
+  file.path(input_dir, "B3GAT1_LD_r2.tsv")
+)
+ld_file <- ld_candidates[file.exists(ld_candidates)][1]
+
+recomb_bw <- file.path(
+  input_dir,
+  "recomb_hg19_hapMapRelease24CombinedRecombMap.bw"
+)
+
+if (!file.exists(gwas_file)) {
+  stop("GWAS file not found: ", gwas_file)
+}
+if (is.na(ld_file)) {
+  stop("No LD file found. Expected one of:\n  ",
+       paste(ld_candidates, collapse = "\n  "))
+}
+if (!file.exists(recomb_bw)) {
+  stop("Recombination .bw file not found: ", recomb_bw)
 }
 
-# ---------- 1. Load GWAS ----------
-cat("Reading GWAS from:", gwas_file, "\n")
+cat("Using GWAS file: ", gwas_file, "\n")
+cat("Using LD file:   ", ld_file, "\n")
+cat("Using recomb BW: ", recomb_bw, "\n")
+
+# ----------------- 1) Read GWAS -----------------
 gwas <- fread(gwas_file)
+gwas <- as.data.frame(gwas)
 
-if (!("variant_id" %in% names(gwas))) {
-  stop("GWAS file must contain a 'variant_id' column. Found: ", paste(names(gwas), collapse = ", "))
+needed_cols <- c(
+  "variant_id", "chromosome", "base_pair_location", "p_value"
+)
+missing <- setdiff(needed_cols, colnames(gwas))
+if (length(missing) > 0L) {
+  stop("GWAS is missing required columns: ",
+       paste(missing, collapse = ", "),
+       "\nAvailable: ",
+       paste(colnames(gwas), collapse = ", "))
 }
-if (!all(c("chromosome", "base_pair_location", "p_value") %in% names(gwas))) {
-  stop("GWAS file must contain 'chromosome', 'base_pair_location', and 'p_value' columns.")
-}
 
-gwas[, variant_id := as.character(variant_id)]
+cat("GWAS columns (first 12):\n")
+print(colnames(gwas)[1:min(12, ncol(gwas))])
 
-# ---------- 2. Load LD file and normalize columns ----------
-cat("Reading LD from:", ld_file, "\n")
-ld <- fread(ld_file)
+# ----------------- 2) Read LD and normalize -----------------
+ld_df <- fread(ld_file)
+ld_names <- colnames(ld_df)
 
-# Try to standardize to variant_id + r2
-ld_names <- names(ld)
-
-# Map common LDassoc formats to our standard names
+# Map typical LDassoc columns to canonical names
 if ("RS_Number" %in% ld_names && !("variant_id" %in% ld_names)) {
-  setnames(ld, "RS_Number", "variant_id")
+  setnames(ld_df, "RS_Number", "variant_id")
 }
 if ("SNP" %in% ld_names && !("variant_id" %in% ld_names)) {
-  setnames(ld, "SNP", "variant_id")
+  setnames(ld_df, "SNP", "variant_id")
 }
 if ("R2" %in% ld_names && !("r2" %in% ld_names)) {
-  setnames(ld, "R2", "r2")
+  setnames(ld_df, "R2", "r2")
 }
 
-if (!all(c("variant_id", "r2") %in% names(ld))) {
+if (!all(c("variant_id", "r2") %in% colnames(ld_df))) {
   stop(
-    "LD file must have 'variant_id' and 'r2' columns (or something mappable, e.g. 'RS_Number' + 'R2'). ",
-    "Current columns: ", paste(names(ld), collapse = ", ")
+    "LD file must have 'variant_id' and 'r2' columns (or mappable names).\n",
+    "Current LD columns: ",
+    paste(colnames(ld_df), collapse = ", ")
   )
 }
 
-ld[, variant_id := as.character(variant_id)]
+ld_df[, variant_id := as.character(variant_id)]
+ld_clean <- unique(ld_df[, .(variant_id, r2)], by = "variant_id")
 
-# Keep only what we need
-ld <- ld[, .(variant_id, r2)]
+cat("LD rows:", nrow(ld_clean), "\n")
 
-# ---------- 3. Merge GWAS + LD ----------
-cat("Merging GWAS with LD by variant_id...\n")
+# ----------------- 3) Merge GWAS + LD -----------------
+gwas_dt <- as.data.table(gwas)
+gwas_dt[, variant_id := as.character(variant_id)]
+
 gwas_ld <- merge(
-  gwas,
-  ld,
+  gwas_dt,
+  ld_clean,
   by = "variant_id",
   all.x = TRUE
 )
 
-cat("Variants with non-NA r2:", sum(!is.na(gwas_ld$r2)), "\n")
+cat("Variants with non-NA r2:",
+    sum(!is.na(gwas_ld$r2)), "\n")
 
-# ---------- 4. Subset to B3GAT1 locus ----------
-region <- gwas_ld[
+# ----------------- 4) Define B3GAT1 locus & index SNP -----------------
+region_chr <- 11L
+center_bp  <- 134281332L
+flank_bp   <- 150000L
+
+start_bp <- center_bp - flank_bp
+end_bp   <- center_bp + flank_bp
+
+cat("Locus window: chr", region_chr, ":",
+    start_bp, "-", end_bp, "\n", sep = "")
+
+# Subset to locus window for CSV and for index SNP search
+region_sub <- gwas_ld[
   chromosome == region_chr &
     base_pair_location >= start_bp &
     base_pair_location <= end_bp
 ]
 
-cat("Variants in region:", nrow(region), "\n")
+cat("Variants in locus window:", nrow(region_sub), "\n")
 
-if (nrow(region) == 0L) {
-  stop("No variants found in the specified B3GAT1 locus window.")
+if (nrow(region_sub) == 0L) {
+  stop("No variants in B3GAT1 window; check coordinates / build.")
 }
 
-# ---------- 5. Choose index SNP ----------
-idx_row <- region[variant_id == index_snp_preferred]
+# Try exact coordinate first
+sentinel_row <- region_sub[
+  base_pair_location == center_bp
+]
 
-if (nrow(idx_row) == 0L) {
-  message("Preferred index SNP rs78760579 not found in region; using min p-value as index SNP.")
-  idx_row <- region[which.min(p_value)]
+if (nrow(sentinel_row) == 0L) {
+  message("No SNP exactly at center_bp; using min p-value in window as index SNP.")
+  sentinel_row <- region_sub[which.min(p_value)]
 }
 
-index_id <- idx_row$variant_id[1]
-cat("Using index SNP:", index_id, "\n")
+index_id <- sentinel_row$variant_id[1]
+cat("Index SNP variant_id:", index_id, "\n")
 
-# ---------- 6. Build locuszoomr locus object ----------
+# ----------------- 5) Build locuszoomr locus object (for plotting) -----------------
 loc <- locus(
-  data       = region,
+  data       = gwas_ld,
   ens_db     = "EnsDb.Hsapiens.v75",
   chrom      = "chromosome",
   pos        = "base_pair_location",
@@ -118,32 +149,33 @@ loc <- locus(
   labs       = "variant_id",
   index_snp  = index_id,
   flank      = flank_bp,
-  LD         = "r2",
-  std_filter = FALSE
+  LD         = "r2",       # use local LD from LDassoc
+  std_filter = TRUE
 )
 
-# ---------- 7. Add recombination rate from local bigWig ----------
-cat("Importing recombination track from:", recomb_bw, "\n")
-recomb_hg19 <- import.bw(recomb_bw)
-loc <- link_recomb(loc, recomb = recomb_hg19)
+cat("Basic locus summary:\n")
+print(summary(loc))
 
-# ---------- 8. Write output.csv ----------
-loc_data <- loc$data
+# ----------------- 6) Add recombination from local .bw -----------------
+cat("Importing recombination track...\n")
+recomb.hg19 <- import.bw(recomb_bw)
+loc <- link_recomb(loc, recomb = recomb.hg19)
 
+# ----------------- 7) Write output.csv from region_sub -----------------
 output_df <- data.table(
-  variant_id   = loc_data$variant_id,
-  chromosome   = as.integer(loc_data$chromosome),
-  position_bp  = as.integer(loc_data$base_pair_location),
-  p_value      = as.numeric(loc_data$p_value),
-  neg_log10_p  = -log10(as.numeric(loc_data$p_value)),
-  r2           = as.numeric(loc_data$r2),
-  is_index_snp = loc_data$variant_id == index_id
+  variant_id   = region_sub$variant_id,
+  chromosome   = as.integer(region_sub$chromosome),
+  position_bp  = as.integer(region_sub$base_pair_location),
+  p_value      = as.numeric(region_sub$p_value),
+  neg_log10_p  = -log10(as.numeric(region_sub$p_value)),
+  r2           = as.numeric(region_sub$r2),
+  is_index_snp = region_sub$variant_id == index_id
 )
 
 fwrite(output_df, file = "output.csv")
 cat("Wrote output.csv with", nrow(output_df), "rows.\n")
 
-# ---------- 9. Write output.png ----------
+# ----------------- 8) Write output.png -----------------
 png("output.png", width = 900, height = 700)
 locus_plot(
   loc,
