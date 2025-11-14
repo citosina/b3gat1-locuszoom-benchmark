@@ -1,0 +1,41 @@
+{
+  "id": "08089f33-234d-4df2-83d1-2e91f5883d72",
+  "paper": "https://doi.org/10.1016/j.ajhg.2018.02.016",
+  "figure_reference": "Figure 2.5B",
+  "row": "variant in the B3GAT1 locus (chr11) within ±150 kb of rs78760579 in the GCST006085 prostate cancer GWAS",
+  "columns": [
+    {
+      "name": "chromosome",
+      "type": "int",
+      "description": "Chromosome number of the variant, as in the GWAS summary statistics file."
+    },
+    {
+      "name": "position_bp",
+      "type": "int",
+      "description": "Base-pair position (hg19/GRCh37) of the variant, as in the GWAS summary statistics file."
+    },
+    {
+      "name": "minus_log10_p",
+      "type": "float",
+      "description": "-log10 of the GWAS p-value for the association between the variant and prostate cancer risk."
+    },
+    {
+      "name": "r2",
+      "type": "float",
+      "description": "Local linkage disequilibrium r^2 between the variant and the index SNP rs78760579, computed from the LDlink LDassoc output for the B3GAT1 locus. Missing (NA) when LD information is unavailable for that variant."
+    },
+    {
+      "name": "is_index",
+      "type": "bool",
+      "description": "TRUE if the variant is the index SNP rs78760579, FALSE otherwise."
+    }
+  ],
+  "notes": [
+    "Use the GCST006085 GWAS summary statistics file exactly as provided in input_data; do not re-download or subset externally.",
+    "Restrict the extracted_solution.csv rows to variants on chromosome 11 within ±150 kb of rs78760579 at position 134281332 (hg19/GRCh37).",
+    "Use EnsDb.Hsapiens.v75 as the Ensembl annotation database for GRCh37 when constructing the locus object with locuszoomr.",
+    "Use the pre-computed LD file B3GAT1_LD_r2_clean.tsv in input_data as the sole source of r^2 values; do not call the LDlink API in the solution.",
+    "Use the local recombination map file recomb_hg19_hapMapRelease24CombinedRecombMap.bw in input_data when adding recombination rate to the locus plot.",
+    "The extracted_solution.jpg plot should qualitatively match the B3GAT1 LocusZoom-style panel in Figure 2.5B, including the index SNP highlight and the color scale based on r^2."
+  ]
+}
